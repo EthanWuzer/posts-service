@@ -2,7 +2,7 @@ from typing import List, Optional
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
@@ -24,6 +24,7 @@ async def get_posts(db: AsyncIOMotorDatabase = Depends(get_db)):
 
 @router.post("/posts", response_model=Post, status_code=status.HTTP_201_CREATED)
 async def create_post(
+    request: Request,
     userId: str = Form(...),
     username: str = Form(...),
     userProfilePictureUrl: str = Form(...),
@@ -34,7 +35,8 @@ async def create_post(
     """Create a new post with a server-generated postId and timestamp. Accepts a JPEG or PNG image."""
     ext = validate_image(image)
     post_id = str(uuid4())
-    img_url = await save_image(image, post_id, ext)
+    filename = await save_image(image, post_id, ext)
+    img_url = f"{request.base_url}uploads/{filename}"
     timestamp = datetime.now(timezone.utc).isoformat()
     document = {
         "_id": post_id,
@@ -68,6 +70,7 @@ async def get_post(post_id: str, db: AsyncIOMotorDatabase = Depends(get_db)):
 @router.put("/posts/{post_id}", response_model=Post, status_code=status.HTTP_200_OK)
 async def update_post(
     post_id: str,
+    request: Request,
     caption: Optional[str] = Form(None),
     image: Optional[UploadFile] = File(None),
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -87,9 +90,10 @@ async def update_post(
                 detail=f"Post with id '{post_id}' not found",
             )
         old_url = existing.get("imgUrl", "")
-        if old_url:
-            delete_image(old_url)
-        fields["imgUrl"] = await save_image(image, post_id, ext)
+        if "/uploads/" in old_url:
+            delete_image(old_url.split("/uploads/")[-1])
+        filename = await save_image(image, post_id, ext)
+        fields["imgUrl"] = f"{request.base_url}uploads/{filename}"
 
     if not fields:
         doc = await db.find_one({"_id": post_id})
@@ -125,8 +129,8 @@ async def delete_post(post_id: str, db: AsyncIOMotorDatabase = Depends(get_db)):
             detail=f"Post with id '{post_id}' not found",
         )
     img_url = doc.get("imgUrl", "")
-    if img_url:
-        delete_image(img_url)
+    if "/uploads/" in img_url:
+        delete_image(img_url.split("/uploads/")[-1])
 
 
 @router.put(

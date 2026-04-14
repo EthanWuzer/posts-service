@@ -130,7 +130,7 @@ async def test_create_post_happy_path():
 
     try:
         with patch("app.routes.posts.validate_image", return_value="jpg"), \
-             patch("app.routes.posts.save_image", new=AsyncMock(return_value=f"https://pub.r2.dev/{SAMPLE_POST_ID}.jpg")):
+             patch("app.routes.posts.save_image", new=AsyncMock(return_value=f"{SAMPLE_POST_ID}.jpg")):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -147,7 +147,7 @@ async def test_create_post_happy_path():
     assert "postId" in data
     assert data["userId"] == "user-001"
     assert data["caption"] == "Hello world"
-    assert data["imgUrl"] == f"https://pub.r2.dev/{SAMPLE_POST_ID}.jpg"
+    assert data["imgUrl"] == f"http://test/uploads/{SAMPLE_POST_ID}.jpg"
     assert data["likes"] == 0
     assert data["comments"] == []
     assert "timestamp" in data
@@ -161,7 +161,7 @@ async def test_create_post_not_found():
 
     try:
         with patch("app.routes.posts.validate_image", return_value="jpg"), \
-             patch("app.routes.posts.save_image", new=AsyncMock(return_value=f"https://pub.r2.dev/{SAMPLE_POST_ID}.jpg")):
+             patch("app.routes.posts.save_image", new=AsyncMock(return_value=f"{SAMPLE_POST_ID}.jpg")):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -363,7 +363,7 @@ async def test_update_post_with_new_image():
 
     try:
         with patch("app.routes.posts.validate_image", return_value="jpg"), \
-             patch("app.routes.posts.save_image", new=AsyncMock(return_value=f"https://pub.r2.dev/{SAMPLE_POST_ID}.jpg")), \
+             patch("app.routes.posts.save_image", new=AsyncMock(return_value=f"{SAMPLE_POST_ID}.jpg")), \
              patch("app.routes.posts.delete_image") as mock_delete:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -376,7 +376,7 @@ async def test_update_post_with_new_image():
         _clear_overrides()
 
     assert response.status_code == 200
-    mock_delete.assert_called_once_with("http://test/uploads/old-file.jpg")
+    mock_delete.assert_called_once_with("old-file.jpg")
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +404,7 @@ async def test_delete_post_happy_path():
     assert response.status_code == 204
     assert response.content == b""
     mock_col.find_one_and_delete.assert_called_once_with({"_id": SAMPLE_POST_ID})
-    mock_delete.assert_called_once_with(f"http://test/uploads/{SAMPLE_POST_ID}.jpg")
+    mock_delete.assert_called_once_with(f"{SAMPLE_POST_ID}.jpg")
 
 
 @pytest.mark.asyncio
