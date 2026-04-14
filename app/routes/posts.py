@@ -2,7 +2,7 @@ from typing import List, Optional
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
@@ -14,9 +14,13 @@ router = APIRouter()
 
 
 @router.get("/posts", response_model=List[Post], status_code=status.HTTP_200_OK)
-async def get_posts(db: AsyncIOMotorDatabase = Depends(get_db)):
-    """Retrieve all posts."""
-    docs = await db.find().to_list(None)
+async def get_posts(
+    userId: Optional[List[str]] = Query(default=None),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Retrieve all posts. Pass one or more `userId` query params to filter by user(s)."""
+    query = {"userId": {"$in": userId}} if userId else {}
+    docs = await db.find(query).to_list(None)
     for doc in docs:
         doc["postId"] = doc.pop("_id")
     return docs

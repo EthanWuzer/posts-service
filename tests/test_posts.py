@@ -118,6 +118,56 @@ async def test_get_posts_bad_input():
     assert response.status_code == 200
 
 
+@pytest.mark.asyncio
+async def test_get_posts_by_single_user_id():
+    post = dict(SAMPLE_POST_DOC)
+    mock_col = _make_collection_mock()
+    cursor_mock = MagicMock()
+    cursor_mock.to_list = AsyncMock(return_value=[post])
+    mock_col.find = MagicMock(return_value=cursor_mock)
+    _override_db(mock_col)
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/posts?userId=user-001")
+    finally:
+        _clear_overrides()
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["userId"] == "user-001"
+    mock_col.find.assert_called_once_with({"userId": {"$in": ["user-001"]}})
+
+
+@pytest.mark.asyncio
+async def test_get_posts_by_multiple_user_ids():
+    post1 = dict(SAMPLE_POST_DOC)
+    post2 = {**SAMPLE_POST_DOC, "_id": "another-post-id", "userId": "user-002", "username": "bob"}
+    mock_col = _make_collection_mock()
+    cursor_mock = MagicMock()
+    cursor_mock.to_list = AsyncMock(return_value=[post1, post2])
+    mock_col.find = MagicMock(return_value=cursor_mock)
+    _override_db(mock_col)
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/posts?userId=user-001&userId=user-002")
+    finally:
+        _clear_overrides()
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+    returned_user_ids = {p["userId"] for p in data}
+    assert returned_user_ids == {"user-001", "user-002"}
+    mock_col.find.assert_called_once_with({"userId": {"$in": ["user-001", "user-002"]}})
+
+
 # ---------------------------------------------------------------------------
 # POST /posts
 # ---------------------------------------------------------------------------
