@@ -17,13 +17,6 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
-    environment:
-      - UPLOAD_DIR=/app/uploads
     depends_on:
       mongo:
         condition: service_healthy
-    volumes:
-      - uploads_data:/app/uploads
-
-volumes:
-  uploads_data:
