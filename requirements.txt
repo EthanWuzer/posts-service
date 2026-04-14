@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+motor
+pydantic
+python-dotenv
+pytest
+pytest-asyncio
+httpx
+python-multipart>=0.0.9

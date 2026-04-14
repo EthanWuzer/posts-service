@@ -1,0 +1,25 @@
+# Claude Code
+.claude/
+
+# Environment variables
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Uploads (user-generated content, not source code)
+uploads/
+
+# macOS
+.DS_Store
