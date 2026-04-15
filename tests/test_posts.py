@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.main import app
 from app.db.mongo import get_db
+from app.dependencies.auth import get_current_user_id
 
 
 # ---------------------------------------------------------------------------
@@ -11,16 +12,18 @@ from app.db.mongo import get_db
 # ---------------------------------------------------------------------------
 
 SAMPLE_POST_ID = "550e8400-e29b-41d4-a716-446655440000"
+CURRENT_USER_ID = "user-001"
+OTHER_USER_ID = "user-999"
 
 SAMPLE_POST_DOC = {
     "_id": SAMPLE_POST_ID,
-    "userId": "user-001",
+    "userId": CURRENT_USER_ID,
     "username": "alice",
     "userProfilePictureUrl": "https://example.com/alice.jpg",
-    "imgUrl": f"http://test/uploads/{SAMPLE_POST_ID}.jpg",
+    "imgUrl": f"https://r2.example.com/{SAMPLE_POST_ID}.jpg",
     "caption": "Hello world",
     "timestamp": "2026-04-07T00:00:00+00:00",
-    "likes": 5,
+    "likedBy": [],
     "comments": [],
 }
 
@@ -28,7 +31,6 @@ SAMPLE_POST_DOC = {
 MINIMAL_JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"\x00" * 10
 
 VALID_POST_CREATE_DATA = {
-    "userId": "user-001",
     "username": "alice",
     "userProfilePictureUrl": "https://example.com/alice.jpg",
     "caption": "Hello world",
@@ -45,6 +47,10 @@ def _make_collection_mock() -> AsyncMock:
 
 def _override_db(mock_collection):
     app.dependency_overrides[get_db] = lambda: mock_collection
+
+
+def _override_auth(user_id: str = CURRENT_USER_ID):
+    app.dependency_overrides[get_current_user_id] = lambda: user_id
 
 
 def _clear_overrides():
@@ -76,7 +82,7 @@ async def test_get_posts_happy_path():
     assert isinstance(data, list)
     assert len(data) == 1
     assert data[0]["postId"] == SAMPLE_POST_ID
-    assert data[0]["likes"] == 5
+    assert data[0]["likedBy"] == []
 
 
 @pytest.mark.asyncio
@@ -127,10 +133,16 @@ async def test_create_post_happy_path():
     mock_col = _make_collection_mock()
     mock_col.insert_one.return_value = MagicMock(inserted_id=SAMPLE_POST_ID)
     _override_db(mock_col)
+    _override_auth()
 
     try:
         with patch("app.routes.posts.validate_image", return_value="jpg"), \
+<<<<<<< Updated upstream
              patch("app.routes.posts.save_image", new=AsyncMock(return_value=f"https://pub.r2.dev/{SAMPLE_POST_ID}.jpg")):
+=======
+             patch("app.routes.posts.save_image", new=AsyncMock(return_value=f"{SAMPLE_POST_ID}.jpg")), \
+             patch("app.routes.posts.get_image_url", return_value=f"https://r2.example.com/{SAMPLE_POST_ID}.jpg"):
+>>>>>>> Stashed changes
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -145,21 +157,26 @@ async def test_create_post_happy_path():
     assert response.status_code == 201
     data = response.json()
     assert "postId" in data
-    assert data["userId"] == "user-001"
+    assert data["userId"] == CURRENT_USER_ID
     assert data["caption"] == "Hello world"
+<<<<<<< Updated upstream
     assert data["imgUrl"] == f"https://pub.r2.dev/{SAMPLE_POST_ID}.jpg"
     assert data["likes"] == 0
+=======
+    assert data["likedBy"] == []
+>>>>>>> Stashed changes
     assert data["comments"] == []
     assert "timestamp" in data
 
 
 @pytest.mark.asyncio
-async def test_create_post_not_found():
+async def test_create_post_no_auth():
     mock_col = _make_collection_mock()
-    mock_col.insert_one.return_value = MagicMock(inserted_id=SAMPLE_POST_ID)
     _override_db(mock_col)
+    # No auth override — dependency will try to fetch real JWT and fail
 
     try:
+<<<<<<< Updated upstream
         with patch("app.routes.posts.validate_image", return_value="jpg"), \
              patch("app.routes.posts.save_image", new=AsyncMock(return_value=f"https://pub.r2.dev/{SAMPLE_POST_ID}.jpg")):
             async with AsyncClient(
@@ -170,20 +187,27 @@ async def test_create_post_not_found():
                     data=VALID_POST_CREATE_DATA,
                     files={"image": ("photo.jpg", MINIMAL_JPEG_BYTES, "image/jpeg")},
                 )
+=======
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/posts",
+                data=VALID_POST_CREATE_DATA,
+                files={"image": ("photo.jpg", MINIMAL_JPEG_BYTES, "image/jpeg")},
+            )
+>>>>>>> Stashed changes
     finally:
         _clear_overrides()
 
-    assert response.status_code == 201
-    mock_col.insert_one.assert_called_once()
-    call_doc = mock_col.insert_one.call_args[0][0]
-    assert "postId" in call_doc
-    assert call_doc["userId"] == VALID_POST_CREATE_DATA["userId"]
+    assert response.status_code == 401
 
 
 @pytest.mark.asyncio
 async def test_create_post_bad_input():
-    # Missing required form fields (userId, username, etc.) and image file → 422
+    # Missing required form fields → 422
     _override_db(_make_collection_mock())
+    _override_auth()
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -200,8 +224,8 @@ async def test_create_post_bad_input():
 
 @pytest.mark.asyncio
 async def test_create_post_invalid_image_type():
-    # Sending a non-JPEG/PNG file should return 400
     _override_db(_make_collection_mock())
+    _override_auth()
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -239,7 +263,7 @@ async def test_get_post_happy_path():
     assert response.status_code == 200
     data = response.json()
     assert data["postId"] == SAMPLE_POST_ID
-    assert data["likes"] == 5
+    assert data["likedBy"] == []
     mock_col.find_one.assert_called_once_with({"_id": SAMPLE_POST_ID})
 
 
@@ -288,8 +312,10 @@ async def test_update_post_happy_path():
     updated_doc["caption"] = "Updated caption"
 
     mock_col = _make_collection_mock()
+    mock_col.find_one.return_value = dict(SAMPLE_POST_DOC)
     mock_col.find_one_and_update.return_value = updated_doc
     _override_db(mock_col)
+    _override_auth()
 
     try:
         async with AsyncClient(
@@ -307,10 +333,32 @@ async def test_update_post_happy_path():
 
 
 @pytest.mark.asyncio
+async def test_update_post_forbidden():
+    mock_col = _make_collection_mock()
+    mock_col.find_one.return_value = dict(SAMPLE_POST_DOC)  # owned by CURRENT_USER_ID
+    _override_db(mock_col)
+    _override_auth(OTHER_USER_ID)  # different user
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.put(
+                f"/posts/{SAMPLE_POST_ID}",
+                data={"caption": "Sneaky update"},
+            )
+    finally:
+        _clear_overrides()
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_update_post_not_found():
     mock_col = _make_collection_mock()
-    mock_col.find_one_and_update.return_value = None
+    mock_col.find_one.return_value = None
     _override_db(mock_col)
+    _override_auth()
 
     try:
         async with AsyncClient(
@@ -329,10 +377,10 @@ async def test_update_post_not_found():
 
 @pytest.mark.asyncio
 async def test_update_post_bad_input():
-    # Sending an unsupported file type returns 400
     mock_col = _make_collection_mock()
     mock_col.find_one.return_value = dict(SAMPLE_POST_DOC)
     _override_db(mock_col)
+    _override_auth()
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -351,19 +399,25 @@ async def test_update_post_bad_input():
 @pytest.mark.asyncio
 async def test_update_post_with_new_image():
     existing_doc = dict(SAMPLE_POST_DOC)
-    existing_doc["imgUrl"] = f"http://test/uploads/old-file.jpg"
+    existing_doc["imgUrl"] = "https://r2.example.com/old-file.jpg"
 
     updated_doc = dict(existing_doc)
-    updated_doc["imgUrl"] = f"http://test/uploads/{SAMPLE_POST_ID}.jpg"
+    updated_doc["imgUrl"] = f"https://r2.example.com/{SAMPLE_POST_ID}.jpg"
 
     mock_col = _make_collection_mock()
     mock_col.find_one.return_value = existing_doc
     mock_col.find_one_and_update.return_value = updated_doc
     _override_db(mock_col)
+    _override_auth()
 
     try:
         with patch("app.routes.posts.validate_image", return_value="jpg"), \
+<<<<<<< Updated upstream
              patch("app.routes.posts.save_image", new=AsyncMock(return_value=f"https://pub.r2.dev/{SAMPLE_POST_ID}.jpg")), \
+=======
+             patch("app.routes.posts.save_image", new=AsyncMock(return_value=f"{SAMPLE_POST_ID}.jpg")), \
+             patch("app.routes.posts.get_image_url", return_value=f"https://r2.example.com/{SAMPLE_POST_ID}.jpg"), \
+>>>>>>> Stashed changes
              patch("app.routes.posts.delete_image") as mock_delete:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -376,7 +430,10 @@ async def test_update_post_with_new_image():
         _clear_overrides()
 
     assert response.status_code == 200
+<<<<<<< Updated upstream
     mock_delete.assert_called_once_with("http://test/uploads/old-file.jpg")
+=======
+>>>>>>> Stashed changes
 
 
 # ---------------------------------------------------------------------------
@@ -386,11 +443,12 @@ async def test_update_post_with_new_image():
 @pytest.mark.asyncio
 async def test_delete_post_happy_path():
     doc_with_img = dict(SAMPLE_POST_DOC)
-    doc_with_img["imgUrl"] = f"http://test/uploads/{SAMPLE_POST_ID}.jpg"
 
     mock_col = _make_collection_mock()
+    mock_col.find_one.return_value = doc_with_img
     mock_col.find_one_and_delete.return_value = doc_with_img
     _override_db(mock_col)
+    _override_auth()
 
     try:
         with patch("app.routes.posts.delete_image") as mock_delete:
@@ -403,15 +461,38 @@ async def test_delete_post_happy_path():
 
     assert response.status_code == 204
     assert response.content == b""
+<<<<<<< Updated upstream
     mock_col.find_one_and_delete.assert_called_once_with({"_id": SAMPLE_POST_ID})
     mock_delete.assert_called_once_with(f"http://test/uploads/{SAMPLE_POST_ID}.jpg")
+=======
+    mock_col.find_one.assert_called_once_with({"_id": SAMPLE_POST_ID})
+
+
+@pytest.mark.asyncio
+async def test_delete_post_forbidden():
+    mock_col = _make_collection_mock()
+    mock_col.find_one.return_value = dict(SAMPLE_POST_DOC)  # owned by CURRENT_USER_ID
+    _override_db(mock_col)
+    _override_auth(OTHER_USER_ID)
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.delete(f"/posts/{SAMPLE_POST_ID}")
+    finally:
+        _clear_overrides()
+
+    assert response.status_code == 403
+>>>>>>> Stashed changes
 
 
 @pytest.mark.asyncio
 async def test_delete_post_not_found():
     mock_col = _make_collection_mock()
-    mock_col.find_one_and_delete.return_value = None
+    mock_col.find_one.return_value = None
     _override_db(mock_col)
+    _override_auth()
 
     try:
         async with AsyncClient(
@@ -436,17 +517,18 @@ async def test_delete_post_bad_input():
 
 
 # ---------------------------------------------------------------------------
-# PUT /posts/{post_id}/likes  (increment)
+# PUT /posts/{post_id}/likes  (like)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_increment_likes_happy_path():
-    incremented_doc = dict(SAMPLE_POST_DOC)
-    incremented_doc["likes"] = 6
+async def test_like_post_happy_path():
+    liked_doc = dict(SAMPLE_POST_DOC)
+    liked_doc["likedBy"] = [CURRENT_USER_ID]
 
     mock_col = _make_collection_mock()
-    mock_col.find_one_and_update.return_value = incremented_doc
+    mock_col.find_one_and_update.return_value = liked_doc
     _override_db(mock_col)
+    _override_auth()
 
     try:
         async with AsyncClient(
@@ -457,14 +539,38 @@ async def test_increment_likes_happy_path():
         _clear_overrides()
 
     assert response.status_code == 200
-    assert response.json()["likes"] == 6
+    assert CURRENT_USER_ID in response.json()["likedBy"]
 
 
 @pytest.mark.asyncio
-async def test_increment_likes_not_found():
+async def test_like_post_idempotent():
+    # Liking again: $addToSet no-ops, doc still returned with user in likedBy
+    liked_doc = dict(SAMPLE_POST_DOC)
+    liked_doc["likedBy"] = [CURRENT_USER_ID]
+
+    mock_col = _make_collection_mock()
+    mock_col.find_one_and_update.return_value = liked_doc
+    _override_db(mock_col)
+    _override_auth()
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.put(f"/posts/{SAMPLE_POST_ID}/likes")
+    finally:
+        _clear_overrides()
+
+    assert response.status_code == 200
+    assert response.json()["likedBy"].count(CURRENT_USER_ID) == 1
+
+
+@pytest.mark.asyncio
+async def test_like_post_not_found():
     mock_col = _make_collection_mock()
     mock_col.find_one_and_update.return_value = None
     _override_db(mock_col)
+    _override_auth()
 
     try:
         async with AsyncClient(
@@ -478,39 +584,19 @@ async def test_increment_likes_not_found():
     assert "nonexistent-id" in response.json()["detail"]
 
 
-@pytest.mark.asyncio
-async def test_increment_likes_bad_input():
-    mock_col = _make_collection_mock()
-    mock_col.find_one_and_update.return_value = None
-    _override_db(mock_col)
-
-    try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            response = await client.put(
-                f"/posts/{SAMPLE_POST_ID}/likes",
-                content=b"not-json",
-                headers={"Content-Type": "text/plain"},
-            )
-    finally:
-        _clear_overrides()
-
-    assert response.status_code == 404
-
-
 # ---------------------------------------------------------------------------
-# DELETE /posts/{post_id}/likes  (decrement)
+# DELETE /posts/{post_id}/likes  (unlike)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_decrement_likes_happy_path():
-    decremented_doc = dict(SAMPLE_POST_DOC)
-    decremented_doc["likes"] = 4
+async def test_unlike_post_happy_path():
+    unliked_doc = dict(SAMPLE_POST_DOC)
+    unliked_doc["likedBy"] = []
 
     mock_col = _make_collection_mock()
-    mock_col.find_one_and_update.return_value = decremented_doc
+    mock_col.find_one_and_update.return_value = unliked_doc
     _override_db(mock_col)
+    _override_auth()
 
     try:
         async with AsyncClient(
@@ -521,15 +607,15 @@ async def test_decrement_likes_happy_path():
         _clear_overrides()
 
     assert response.status_code == 200
-    assert response.json()["likes"] == 4
+    assert CURRENT_USER_ID not in response.json()["likedBy"]
 
 
 @pytest.mark.asyncio
-async def test_decrement_likes_not_found():
+async def test_unlike_post_not_found():
     mock_col = _make_collection_mock()
     mock_col.find_one_and_update.return_value = None
-    mock_col.find_one.return_value = None
     _override_db(mock_col)
+    _override_auth()
 
     try:
         async with AsyncClient(
@@ -541,25 +627,3 @@ async def test_decrement_likes_not_found():
 
     assert response.status_code == 404
     assert "nonexistent-id" in response.json()["detail"]
-
-
-@pytest.mark.asyncio
-async def test_decrement_likes_bad_input():
-    floored_doc = dict(SAMPLE_POST_DOC)
-    floored_doc["likes"] = 0
-
-    mock_col = _make_collection_mock()
-    mock_col.find_one_and_update.return_value = None
-    mock_col.find_one.return_value = floored_doc
-    _override_db(mock_col)
-
-    try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            response = await client.delete(f"/posts/{SAMPLE_POST_ID}/likes")
-    finally:
-        _clear_overrides()
-
-    assert response.status_code == 200
-    assert response.json()["likes"] == 0

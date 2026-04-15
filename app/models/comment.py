@@ -1,3 +1,5 @@
+from typing import List
+
 from pydantic import BaseModel
 
 
@@ -7,12 +9,11 @@ class Comment(BaseModel):
     username: str
     userProfilePictureUrl: str
     text: str
-    likes: int = 0
+    likedBy: List[str] = []
     timestamp: str
 
 
 class CommentCreate(BaseModel):
-    userId: str
     username: str
     userProfilePictureUrl: str
     text: str

@@ -8,3 +8,4 @@ load_dotenv()
 # here makes a missing env var immediately visible instead of producing a
 # silent, hard-to-diagnose connection timeout.
 MONGO_URI = os.environ["MONGO_URI"]
+AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "")

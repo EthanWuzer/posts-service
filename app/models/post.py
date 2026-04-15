@@ -11,12 +11,11 @@ class Post(BaseModel):
     imgUrl: str
     caption: str
     timestamp: str
-    likes: int = 0
+    likedBy: List[str] = []
     comments: List[Comment] = []
 
 
 class PostCreate(BaseModel):
-    userId: str
     username: str
     userProfilePictureUrl: str
     caption: str

@@ -1,10 +1,10 @@
-from typing import List
 from uuid import uuid4
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.db.mongo import get_db
+from app.dependencies.auth import get_current_user_id
 from app.models.comment import Comment, CommentCreate
 
 router = APIRouter()
@@ -19,8 +19,9 @@ async def add_comment(
     post_id: str,
     body: CommentCreate,
     collection=Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
 ):
-    """Add a new comment to a post and return the created comment."""
+    """Add a new comment to a post. userId is taken from the JWT."""
     post = await collection.find_one({"_id": post_id})
     if post is None:
         raise HTTPException(
@@ -30,11 +31,11 @@ async def add_comment(
 
     new_comment = {
         "commentId": str(uuid4()),
-        "userId": body.userId,
+        "userId": current_user_id,
         "username": body.username,
         "userProfilePictureUrl": body.userProfilePictureUrl,
         "text": body.text,
-        "likes": 0,
+        "likedBy": [],
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -54,8 +55,9 @@ async def delete_comment(
     post_id: str,
     comment_id: str,
     collection=Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
 ):
-    """Remove a comment from a post by commentId."""
+    """Remove a comment from a post. Only the comment author may delete."""
     post = await collection.find_one({"_id": post_id})
     if post is None:
         raise HTTPException(
@@ -63,15 +65,24 @@ async def delete_comment(
             detail=f"Post with id '{post_id}' not found",
         )
 
-    result = await collection.update_one(
-        {"_id": post_id},
-        {"$pull": {"comments": {"commentId": comment_id}}},
+    comment = next(
+        (c for c in post.get("comments", []) if c["commentId"] == comment_id), None
     )
-    if result.modified_count == 0:
+    if comment is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Comment with id '{comment_id}' not found",
         )
+    if comment["userId"] != current_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to delete this comment",
+        )
+
+    await collection.update_one(
+        {"_id": post_id},
+        {"$pull": {"comments": {"commentId": comment_id}}},
+    )
 
 
 @router.put(
@@ -82,8 +93,9 @@ async def like_comment(
     post_id: str,
     comment_id: str,
     collection=Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
 ):
-    """Increment the like count on a comment by 1."""
+    """Add the current user to a comment's likedBy list. Idempotent."""
     post = await collection.find_one({"_id": post_id})
     if post is None:
         raise HTTPException(
@@ -91,16 +103,20 @@ async def like_comment(
             detail=f"Post with id '{post_id}' not found",
         )
 
-    result = await collection.update_one(
-        {"_id": post_id},
-        {"$inc": {"comments.$[elem].likes": 1}},
-        array_filters=[{"elem.commentId": comment_id}],
+    comment = next(
+        (c for c in post.get("comments", []) if c["commentId"] == comment_id), None
     )
-    if result.modified_count == 0:
+    if comment is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Comment with id '{comment_id}' not found",
         )
+
+    await collection.update_one(
+        {"_id": post_id},
+        {"$addToSet": {"comments.$[elem].likedBy": current_user_id}},
+        array_filters=[{"elem.commentId": comment_id}],
+    )
 
 
 @router.delete(
@@ -111,8 +127,9 @@ async def unlike_comment(
     post_id: str,
     comment_id: str,
     collection=Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
 ):
-    """Decrement the like count on a comment by 1, floored at 0."""
+    """Remove the current user from a comment's likedBy list. Idempotent."""
     post = await collection.find_one({"_id": post_id})
     if post is None:
         raise HTTPException(
@@ -120,18 +137,17 @@ async def unlike_comment(
             detail=f"Post with id '{post_id}' not found",
         )
 
-    result = await collection.update_one(
-        {"_id": post_id},
-        {"$inc": {"comments.$[elem].likes": -1}},
-        array_filters=[{"elem.commentId": comment_id, "elem.likes": {"$gt": 0}}],
+    comment = next(
+        (c for c in post.get("comments", []) if c["commentId"] == comment_id), None
     )
-    if result.modified_count == 0:
-        exists = await collection.find_one(
-            {"_id": post_id, "comments.commentId": comment_id}
+    if comment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Comment with id '{comment_id}' not found",
         )
-        if exists is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Comment with id '{comment_id}' not found",
-            )
-        # modified_count == 0 but comment exists: likes is already at 0, no-op is correct
+
+    await collection.update_one(
+        {"_id": post_id},
+        {"$pull": {"comments.$[elem].likedBy": current_user_id}},
+        array_filters=[{"elem.commentId": comment_id}],
+    )
