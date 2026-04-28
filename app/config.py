@@ -22,3 +22,9 @@ USERS_SERVICE_BASE_URL = os.getenv("USERS_SERVICE_BASE_URL", "")
 # Placeholder stored on new posts/comments until the users-service exposes
 # a profile-picture field.
 DEFAULT_PROFILE_PICTURE_URL = os.getenv("DEFAULT_PROFILE_PICTURE_URL", "")
+
+CORS_ALLOW_ORIGINS = [
+    o.strip()
+    for o in os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:5173").split(",")
+    if o.strip()
+]

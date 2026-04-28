@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 import app.services.users_client as _users_client
 from app.auth import _load_public_key
-from app.config import JWT_PUBLIC_KEY_PATH, USERS_SERVICE_BASE_URL
+from app.config import CORS_ALLOW_ORIGINS, JWT_PUBLIC_KEY_PATH, USERS_SERVICE_BASE_URL
 from app.db.mongo import lifespan as _db_lifespan
 from app.routes.comments import router as comments_router
 from app.routes.posts import router as posts_router
@@ -35,7 +35,8 @@ app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOW_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
