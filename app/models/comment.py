@@ -12,7 +12,4 @@ class Comment(BaseModel):
 
 
 class CommentCreate(BaseModel):
-    userId: str
-    username: str
-    userProfilePictureUrl: str
     text: str

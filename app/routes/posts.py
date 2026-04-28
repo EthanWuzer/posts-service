@@ -6,8 +6,11 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
+from app.auth import get_current_user_id
+from app.config import DEFAULT_PROFILE_PICTURE_URL
 from app.db.mongo import get_db
 from app.models.post import Post, PostUpdate
+import app.services.users_client as users_client
 from app.utils.images import delete_image, save_image, validate_image
 
 router = APIRouter()
@@ -25,14 +28,13 @@ async def get_posts(db: AsyncIOMotorDatabase = Depends(get_db)):
 @router.post("/posts", response_model=Post, status_code=status.HTTP_201_CREATED)
 async def create_post(
     request: Request,
-    userId: str = Form(...),
-    username: str = Form(...),
-    userProfilePictureUrl: str = Form(...),
     caption: str = Form(...),
     image: UploadFile = File(...),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
 ):
-    """Create a new post with a server-generated postId and timestamp. Accepts a JPEG or PNG image."""
+    """Create a new post attributed to the authenticated user."""
+    username = await users_client.get_username(current_user_id)
     ext = validate_image(image)
     post_id = str(uuid4())
     filename = await save_image(image, post_id, ext)
@@ -40,9 +42,9 @@ async def create_post(
     timestamp = datetime.now(timezone.utc).isoformat()
     document = {
         "_id": post_id,
-        "userId": userId,
+        "userId": current_user_id,
         "username": username,
-        "userProfilePictureUrl": userProfilePictureUrl,
+        "userProfilePictureUrl": DEFAULT_PROFILE_PICTURE_URL,
         "imgUrl": img_url,
         "caption": caption,
         "timestamp": timestamp,
@@ -74,8 +76,21 @@ async def update_post(
     caption: Optional[str] = Form(None),
     image: Optional[UploadFile] = File(None),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
 ):
-    """Update caption and/or image of a post. Supply only the fields to change."""
+    """Update caption and/or image of a post. Only the post owner may update it."""
+    existing = await db.find_one({"_id": post_id})
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Post with id '{post_id}' not found",
+        )
+    if existing["userId"] != current_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to update this post",
+        )
+
     fields: dict = {}
 
     if caption is not None:
@@ -83,12 +98,6 @@ async def update_post(
 
     if image is not None and image.filename:
         ext = validate_image(image)
-        existing = await db.find_one({"_id": post_id})
-        if existing is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Post with id '{post_id}' not found",
-            )
         old_url = existing.get("imgUrl", "")
         if "/uploads/" in old_url:
             delete_image(old_url.split("/uploads/")[-1])
@@ -96,14 +105,8 @@ async def update_post(
         fields["imgUrl"] = f"{request.base_url}uploads/{filename}"
 
     if not fields:
-        doc = await db.find_one({"_id": post_id})
-        if doc is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Post with id '{post_id}' not found",
-            )
-        doc["postId"] = doc.pop("_id")
-        return doc
+        existing["postId"] = existing.pop("_id")
+        return existing
 
     doc = await db.find_one_and_update(
         {"_id": post_id},
@@ -120,26 +123,39 @@ async def update_post(
 
 
 @router.delete("/posts/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_post(post_id: str, db: AsyncIOMotorDatabase = Depends(get_db)):
-    """Delete a post by its ID and remove the associated image from disk."""
-    doc = await db.find_one_and_delete({"_id": post_id})
-    if doc is None:
+async def delete_post(
+    post_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
+):
+    """Delete a post. Only the post owner may delete it."""
+    existing = await db.find_one({"_id": post_id})
+    if existing is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Post with id '{post_id}' not found",
         )
+    if existing["userId"] != current_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to delete this post",
+        )
+    doc = await db.find_one_and_delete({"_id": post_id})
+    if doc is None:
+        return
     img_url = doc.get("imgUrl", "")
     if "/uploads/" in img_url:
         delete_image(img_url.split("/uploads/")[-1])
 
 
 @router.put(
-    "/posts/{post_id}/likes", response_model=Post, status_code=status.HTTP_200_OK
+    "/posts/{post_id}/likes", response_model=Post, status_code=status.HTTP_200_OK,
+    dependencies=[Depends(get_current_user_id)],
 )
 async def increment_likes(
     post_id: str, db: AsyncIOMotorDatabase = Depends(get_db)
 ):
-    """Increment the like count of a post by 1."""
+    """Increment the like count of a post by 1. Requires authentication."""
     doc = await db.find_one_and_update(
         {"_id": post_id},
         {"$inc": {"likes": 1}},
@@ -155,12 +171,13 @@ async def increment_likes(
 
 
 @router.delete(
-    "/posts/{post_id}/likes", response_model=Post, status_code=status.HTTP_200_OK
+    "/posts/{post_id}/likes", response_model=Post, status_code=status.HTTP_200_OK,
+    dependencies=[Depends(get_current_user_id)],
 )
 async def decrement_likes(
     post_id: str, db: AsyncIOMotorDatabase = Depends(get_db)
 ):
-    """Decrement the like count of a post by 1, floored at 0."""
+    """Decrement the like count of a post by 1, floored at 0. Requires authentication."""
     doc = await db.find_one_and_update(
         {"_id": post_id, "likes": {"$gt": 0}},
         {"$inc": {"likes": -1}},

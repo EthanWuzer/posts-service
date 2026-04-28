@@ -1,12 +1,35 @@
+from contextlib import asynccontextmanager
+
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from app.db.mongo import lifespan
-from app.routes.posts import router as posts_router
+
+import app.services.users_client as _users_client
+from app.auth import _load_public_key
+from app.config import JWT_PUBLIC_KEY_PATH, USERS_SERVICE_BASE_URL
+from app.db.mongo import lifespan as _db_lifespan
 from app.routes.comments import router as comments_router
+from app.routes.posts import router as posts_router
 from app.utils.images import UPLOAD_DIR
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@asynccontextmanager
+async def lifespan(app_instance):
+    # Fail fast if the key file is configured but unreadable.
+    if JWT_PUBLIC_KEY_PATH:
+        _load_public_key()
+    _users_client._client = httpx.AsyncClient(
+        base_url=USERS_SERVICE_BASE_URL, timeout=5.0
+    )
+    async with _db_lifespan(app_instance):
+        try:
+            yield
+        finally:
+            await _users_client._client.aclose()
+
 
 app = FastAPI(lifespan=lifespan)
 

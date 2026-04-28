@@ -16,9 +16,6 @@ class Post(BaseModel):
 
 
 class PostCreate(BaseModel):
-    userId: str
-    username: str
-    userProfilePictureUrl: str
     caption: str
 
 

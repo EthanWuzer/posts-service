@@ -8,3 +8,5 @@ pytest-asyncio
 httpx
 python-multipart>=0.0.9
 boto3
+pyjwt
+cryptography
