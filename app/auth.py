@@ -1,20 +1,30 @@
 from __future__ import annotations
 
+import httpx
 import jwt
 from fastapi import HTTPException, Request, status
 
-from app.config import JWT_AUDIENCE, JWT_ISSUER, JWT_PUBLIC_KEY_PATH
+import app.services.users_client as users_client
+from app.config import JWT_AUDIENCE, JWT_ISSUER, USERS_SERVICE_API_KEY
 
 _public_key: str | None = None
 
 
-def _load_public_key() -> str:
+async def _fetch_public_key() -> str:
     global _public_key
-    if _public_key is None:
-        if not JWT_PUBLIC_KEY_PATH:
-            raise RuntimeError("JWT_PUBLIC_KEY_PATH is not configured")
-        with open(JWT_PUBLIC_KEY_PATH) as f:
-            _public_key = f.read()
+    if _public_key is not None:
+        return _public_key
+    client = users_client._client
+    if client is None:
+        raise RuntimeError("Users service client not initialized")
+    if not USERS_SERVICE_API_KEY:
+        raise RuntimeError("USERS_SERVICE_API_KEY is not configured")
+    response = await client.get(
+        "/api/auth/jwt-key",
+        headers={"X-Api-Key": USERS_SERVICE_API_KEY},
+    )
+    response.raise_for_status()
+    _public_key = response.json()["jwtKey"]
     return _public_key
 
 
@@ -32,8 +42,8 @@ async def get_current_user_id(request: Request) -> str:
             headers={"WWW-Authenticate": "Bearer"},
         )
     try:
-        public_key = _load_public_key()
-    except (RuntimeError, OSError):
+        public_key = await _fetch_public_key()
+    except (RuntimeError, httpx.HTTPError, KeyError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Server authentication configuration error",
@@ -52,7 +62,7 @@ async def get_current_user_id(request: Request) -> str:
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    user_id: str | None = payload.get("nameid")
+    user_id: str | None = payload.get("sub")
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

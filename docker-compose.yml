@@ -19,11 +19,6 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
-    volumes:
-      # Mount the RSA public key used to verify JWTs issued by the users-service.
-      # Generate or copy it from the users-service key pair, e.g.:
-      #   openssl rsa -in private.pem -pubout -out public.pem
-      - ./keys/jwt_public.pem:/run/secrets/jwt_public.pem:ro
     depends_on:
       mongo:
         condition: service_healthy

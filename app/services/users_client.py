@@ -3,6 +3,8 @@ from __future__ import annotations
 import httpx
 from fastapi import HTTPException, status
 
+from app.config import USERS_SERVICE_API_KEY
+
 # Populated by the app lifespan; None until then.
 _client: httpx.AsyncClient | None = None
 
@@ -14,7 +16,10 @@ async def get_username(user_id: str) -> str:
             detail="Users service client not initialized",
         )
     try:
-        response = await _client.get(f"/api/user/{user_id}")
+        response = await _client.get(
+            f"/api/user/{user_id}",
+            headers={"X-Api-Key": USERS_SERVICE_API_KEY},
+        )
     except httpx.RequestError:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
