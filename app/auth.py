@@ -28,6 +28,16 @@ async def _fetch_public_key() -> str:
     return _public_key
 
 
+async def get_optional_user_id(request: Request) -> str | None:
+    has_creds = (
+        request.headers.get("Authorization", "").startswith("Bearer ")
+        or "jwt" in request.cookies
+    )
+    if not has_creds:
+        return None
+    return await get_current_user_id(request)
+
+
 async def get_current_user_id(request: Request) -> str:
     token: str | None = None
     auth_header = request.headers.get("Authorization", "")

@@ -12,6 +12,7 @@ class Post(BaseModel):
     caption: str
     timestamp: str
     likes: int = 0
+    likedByCurrentUser: bool = False
     comments: List[Comment] = []
 
 

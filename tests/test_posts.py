@@ -21,7 +21,7 @@ SAMPLE_POST_DOC = {
     "imgUrl": f"http://test/uploads/{SAMPLE_POST_ID}.jpg",
     "caption": "Hello world",
     "timestamp": "2026-04-07T00:00:00+00:00",
-    "likes": 5,
+    "likedBy": ["u1", "u2", "u3", "u4", "u5"],
     "comments": [],
 }
 
@@ -53,6 +53,7 @@ def _override_db(mock_collection):
 async def test_get_posts_happy_path():
     mock_col = _make_collection_mock()
     cursor_mock = MagicMock()
+    cursor_mock.sort = MagicMock(return_value=cursor_mock)
     cursor_mock.to_list = AsyncMock(return_value=[dict(SAMPLE_POST_DOC)])
     mock_col.find = MagicMock(return_value=cursor_mock)
     _override_db(mock_col)
@@ -77,6 +78,7 @@ async def test_get_posts_happy_path():
 async def test_get_posts_not_found():
     mock_col = _make_collection_mock()
     cursor_mock = MagicMock()
+    cursor_mock.sort = MagicMock(return_value=cursor_mock)
     cursor_mock.to_list = AsyncMock(return_value=[])
     mock_col.find = MagicMock(return_value=cursor_mock)
     _override_db(mock_col)
@@ -97,6 +99,7 @@ async def test_get_posts_not_found():
 async def test_get_posts_bad_input():
     mock_col = _make_collection_mock()
     cursor_mock = MagicMock()
+    cursor_mock.sort = MagicMock(return_value=cursor_mock)
     cursor_mock.to_list = AsyncMock(return_value=[])
     mock_col.find = MagicMock(return_value=cursor_mock)
     _override_db(mock_col)
@@ -509,7 +512,7 @@ async def test_delete_post_wrong_user_returns_403():
 @pytest.mark.asyncio
 async def test_increment_likes_happy_path():
     incremented_doc = dict(SAMPLE_POST_DOC)
-    incremented_doc["likes"] = 6
+    incremented_doc["likedBy"] = ["u1", "u2", "u3", "u4", "u5", "u6"]
 
     mock_col = _make_collection_mock()
     mock_col.find_one_and_update.return_value = incremented_doc
@@ -576,7 +579,7 @@ async def test_increment_likes_bad_input():
 @pytest.mark.asyncio
 async def test_decrement_likes_happy_path():
     decremented_doc = dict(SAMPLE_POST_DOC)
-    decremented_doc["likes"] = 4
+    decremented_doc["likedBy"] = ["u1", "u2", "u3", "u4"]
 
     mock_col = _make_collection_mock()
     mock_col.find_one_and_update.return_value = decremented_doc
@@ -618,11 +621,10 @@ async def test_decrement_likes_not_found():
 @pytest.mark.asyncio
 async def test_decrement_likes_bad_input():
     floored_doc = dict(SAMPLE_POST_DOC)
-    floored_doc["likes"] = 0
+    floored_doc["likedBy"] = []
 
     mock_col = _make_collection_mock()
-    mock_col.find_one_and_update.return_value = None
-    mock_col.find_one.return_value = floored_doc
+    mock_col.find_one_and_update.return_value = floored_doc
     _override_db(mock_col)
     _override_auth()
 

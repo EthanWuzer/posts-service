@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
-from app.auth import get_current_user_id
+from app.auth import get_current_user_id, get_optional_user_id
 from app.config import DEFAULT_PROFILE_PICTURE_URL
 from app.db.mongo import get_db
 from app.models.post import Post, PostUpdate
@@ -16,12 +16,23 @@ from app.utils.images import delete_image, save_image, validate_image
 router = APIRouter()
 
 
+def _shape_post(doc: dict, viewer_id: str | None = None) -> dict:
+    liked_by: list = doc.pop("likedBy", [])
+    doc["likes"] = len(liked_by)
+    doc["likedByCurrentUser"] = viewer_id in liked_by if viewer_id else False
+    doc["postId"] = doc.pop("_id")
+    return doc
+
+
 @router.get("/posts", response_model=List[Post], status_code=status.HTTP_200_OK)
-async def get_posts(db: AsyncIOMotorDatabase = Depends(get_db)):
-    """Retrieve all posts."""
-    docs = await db.find().to_list(None)
+async def get_posts(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    viewer_id: str | None = Depends(get_optional_user_id),
+):
+    """Retrieve all posts sorted by most recent."""
+    docs = await db.find().sort("timestamp", -1).to_list(None)
     for doc in docs:
-        doc["postId"] = doc.pop("_id")
+        _shape_post(doc, viewer_id)
     return docs
 
 
@@ -48,16 +59,47 @@ async def create_post(
         "imgUrl": img_url,
         "caption": caption,
         "timestamp": timestamp,
-        "likes": 0,
+        "likedBy": [],
         "comments": [],
     }
     await db.insert_one(document)
-    document["postId"] = document.pop("_id")
+    _shape_post(document, current_user_id)
     return document
 
 
+@router.get("/posts/feed", response_model=List[Post], status_code=status.HTTP_200_OK)
+async def get_feed(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
+):
+    """Retrieve posts from the current user and their friends, sorted by most recent."""
+    friends = await users_client.get_friends(current_user_id)
+    author_ids = [str(f["id"]) for f in friends] + [current_user_id]
+    docs = await db.find({"userId": {"$in": author_ids}}).sort("timestamp", -1).to_list(None)
+    for doc in docs:
+        _shape_post(doc, current_user_id)
+    return docs
+
+
+@router.get("/posts/user/{user_id}", response_model=List[Post], status_code=status.HTTP_200_OK)
+async def get_user_posts(
+    user_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
+):
+    """Retrieve all posts by a specific user, sorted by most recent."""
+    docs = await db.find({"userId": user_id}).sort("timestamp", -1).to_list(None)
+    for doc in docs:
+        _shape_post(doc, current_user_id)
+    return docs
+
+
 @router.get("/posts/{post_id}", response_model=Post, status_code=status.HTTP_200_OK)
-async def get_post(post_id: str, db: AsyncIOMotorDatabase = Depends(get_db)):
+async def get_post(
+    post_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    viewer_id: str | None = Depends(get_optional_user_id),
+):
     """Retrieve a single post by its ID."""
     doc = await db.find_one({"_id": post_id})
     if doc is None:
@@ -65,7 +107,7 @@ async def get_post(post_id: str, db: AsyncIOMotorDatabase = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Post with id '{post_id}' not found",
         )
-    doc["postId"] = doc.pop("_id")
+    _shape_post(doc, viewer_id)
     return doc
 
 
@@ -105,7 +147,7 @@ async def update_post(
         fields["imgUrl"] = f"{request.base_url}uploads/{filename}"
 
     if not fields:
-        existing["postId"] = existing.pop("_id")
+        _shape_post(existing, current_user_id)
         return existing
 
     doc = await db.find_one_and_update(
@@ -118,7 +160,7 @@ async def update_post(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Post with id '{post_id}' not found",
         )
-    doc["postId"] = doc.pop("_id")
+    _shape_post(doc, current_user_id)
     return doc
 
 
@@ -150,15 +192,16 @@ async def delete_post(
 
 @router.put(
     "/posts/{post_id}/likes", response_model=Post, status_code=status.HTTP_200_OK,
-    dependencies=[Depends(get_current_user_id)],
 )
 async def increment_likes(
-    post_id: str, db: AsyncIOMotorDatabase = Depends(get_db)
+    post_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
 ):
-    """Increment the like count of a post by 1. Requires authentication."""
+    """Like a post. Idempotent — liking twice has no extra effect."""
     doc = await db.find_one_and_update(
         {"_id": post_id},
-        {"$inc": {"likes": 1}},
+        {"$addToSet": {"likedBy": current_user_id}},
         return_document=ReturnDocument.AFTER,
     )
     if doc is None:
@@ -166,31 +209,28 @@ async def increment_likes(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Post with id '{post_id}' not found",
         )
-    doc["postId"] = doc.pop("_id")
+    _shape_post(doc, current_user_id)
     return doc
 
 
 @router.delete(
     "/posts/{post_id}/likes", response_model=Post, status_code=status.HTTP_200_OK,
-    dependencies=[Depends(get_current_user_id)],
 )
 async def decrement_likes(
-    post_id: str, db: AsyncIOMotorDatabase = Depends(get_db)
+    post_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
 ):
-    """Decrement the like count of a post by 1, floored at 0. Requires authentication."""
+    """Unlike a post. Idempotent — unliking when not liked is a no-op."""
     doc = await db.find_one_and_update(
-        {"_id": post_id, "likes": {"$gt": 0}},
-        {"$inc": {"likes": -1}},
+        {"_id": post_id},
+        {"$pull": {"likedBy": current_user_id}},
         return_document=ReturnDocument.AFTER,
     )
     if doc is None:
-        exists = await db.find_one({"_id": post_id})
-        if exists is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Post with id '{post_id}' not found",
-            )
-        exists["postId"] = exists.pop("_id")
-        return exists
-    doc["postId"] = doc.pop("_id")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Post with id '{post_id}' not found",
+        )
+    _shape_post(doc, current_user_id)
     return doc
