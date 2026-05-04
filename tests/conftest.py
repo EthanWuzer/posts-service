@@ -16,9 +16,17 @@ def _clear_overrides():
     app.dependency_overrides.clear()
 
 
-def mock_get_username(username: str = TEST_USERNAME):
-    """Context manager that replaces the users-service HTTP call in tests."""
+def mock_get_user(username: str = TEST_USERNAME, profile_pic_url: str = ""):
+    """Patch get_user — used by create_post and add_comment (single-user write-time lookup)."""
     return mock_patch(
-        "app.services.users_client.get_username",
-        new=AsyncMock(return_value=username),
+        "app.services.users_client.get_user",
+        new=AsyncMock(return_value={"username": username, "profilePicUrl": profile_pic_url}),
+    )
+
+
+def mock_get_users(user_id: str = TEST_USER_ID, username: str = TEST_USERNAME, profile_pic_url: str = ""):
+    """Patch get_users — used by all read/mutate endpoints (batch lookup)."""
+    return mock_patch(
+        "app.services.users_client.get_users",
+        new=AsyncMock(return_value={user_id: {"username": username, "profilePicUrl": profile_pic_url}}),
     )

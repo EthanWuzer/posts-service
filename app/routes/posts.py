@@ -16,7 +16,25 @@ from app.utils.images import delete_image, save_image, validate_image
 router = APIRouter()
 
 
-def _shape_post(doc: dict, viewer_id: str | None = None) -> dict:
+def _collect_user_ids(docs: list[dict]) -> list[str]:
+    ids: set[str] = set()
+    for doc in docs:
+        if doc.get("userId"):
+            ids.add(doc["userId"])
+        for c in doc.get("comments", []):
+            if c.get("userId"):
+                ids.add(c["userId"])
+    return list(ids)
+
+
+def _shape_post(doc: dict, viewer_id: str | None, users_map: dict[str, dict]) -> dict:
+    author = users_map.get(doc.get("userId"), {})
+    doc["username"] = author.get("username") or "[unknown user]"
+    doc["userProfilePictureUrl"] = author.get("profilePicUrl") or DEFAULT_PROFILE_PICTURE_URL
+    for c in doc.get("comments", []):
+        info = users_map.get(c.get("userId"), {})
+        c["username"] = info.get("username") or "[unknown user]"
+        c["userProfilePictureUrl"] = info.get("profilePicUrl") or DEFAULT_PROFILE_PICTURE_URL
     liked_by: list = doc.pop("likedBy", [])
     doc["likes"] = len(liked_by)
     doc["likedByCurrentUser"] = viewer_id in liked_by if viewer_id else False
@@ -31,8 +49,9 @@ async def get_posts(
 ):
     """Retrieve all posts sorted by most recent."""
     docs = await db.find().sort("timestamp", -1).to_list(None)
+    users_map = await users_client.get_users(_collect_user_ids(docs))
     for doc in docs:
-        _shape_post(doc, viewer_id)
+        _shape_post(doc, viewer_id, users_map)
     return docs
 
 
@@ -45,7 +64,6 @@ async def create_post(
     current_user_id: str = Depends(get_current_user_id),
 ):
     """Create a new post attributed to the authenticated user."""
-    username = await users_client.get_username(current_user_id)
     ext = validate_image(image)
     post_id = str(uuid4())
     filename = await save_image(image, post_id, ext)
@@ -54,8 +72,6 @@ async def create_post(
     document = {
         "_id": post_id,
         "userId": current_user_id,
-        "username": username,
-        "userProfilePictureUrl": DEFAULT_PROFILE_PICTURE_URL,
         "imgUrl": img_url,
         "caption": caption,
         "timestamp": timestamp,
@@ -63,7 +79,9 @@ async def create_post(
         "comments": [],
     }
     await db.insert_one(document)
-    _shape_post(document, current_user_id)
+    user_info = await users_client.get_user(current_user_id)
+    users_map = {current_user_id: user_info or {}}
+    _shape_post(document, current_user_id, users_map)
     return document
 
 
@@ -76,8 +94,9 @@ async def get_feed(
     friends = await users_client.get_friends(current_user_id)
     author_ids = [str(f["id"]) for f in friends] + [current_user_id]
     docs = await db.find({"userId": {"$in": author_ids}}).sort("timestamp", -1).to_list(None)
+    users_map = await users_client.get_users(_collect_user_ids(docs))
     for doc in docs:
-        _shape_post(doc, current_user_id)
+        _shape_post(doc, current_user_id, users_map)
     return docs
 
 
@@ -89,8 +108,9 @@ async def get_user_posts(
 ):
     """Retrieve all posts by a specific user, sorted by most recent."""
     docs = await db.find({"userId": user_id}).sort("timestamp", -1).to_list(None)
+    users_map = await users_client.get_users(_collect_user_ids(docs))
     for doc in docs:
-        _shape_post(doc, current_user_id)
+        _shape_post(doc, current_user_id, users_map)
     return docs
 
 
@@ -107,7 +127,8 @@ async def get_post(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Post with id '{post_id}' not found",
         )
-    _shape_post(doc, viewer_id)
+    users_map = await users_client.get_users(_collect_user_ids([doc]))
+    _shape_post(doc, viewer_id, users_map)
     return doc
 
 
@@ -147,7 +168,8 @@ async def update_post(
         fields["imgUrl"] = f"{request.base_url}uploads/{filename}"
 
     if not fields:
-        _shape_post(existing, current_user_id)
+        users_map = await users_client.get_users(_collect_user_ids([existing]))
+        _shape_post(existing, current_user_id, users_map)
         return existing
 
     doc = await db.find_one_and_update(
@@ -160,7 +182,8 @@ async def update_post(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Post with id '{post_id}' not found",
         )
-    _shape_post(doc, current_user_id)
+    users_map = await users_client.get_users(_collect_user_ids([doc]))
+    _shape_post(doc, current_user_id, users_map)
     return doc
 
 
@@ -209,7 +232,8 @@ async def increment_likes(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Post with id '{post_id}' not found",
         )
-    _shape_post(doc, current_user_id)
+    users_map = await users_client.get_users(_collect_user_ids([doc]))
+    _shape_post(doc, current_user_id, users_map)
     return doc
 
 
@@ -232,5 +256,6 @@ async def decrement_likes(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Post with id '{post_id}' not found",
         )
-    _shape_post(doc, current_user_id)
+    users_map = await users_client.get_users(_collect_user_ids([doc]))
+    _shape_post(doc, current_user_id, users_map)
     return doc

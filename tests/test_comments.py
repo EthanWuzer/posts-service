@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from app.main import app
 from app.db.mongo import get_db
-from tests.conftest import TEST_USER_ID, _clear_overrides, _override_auth, mock_get_username
+from tests.conftest import TEST_USER_ID, _clear_overrides, _override_auth, mock_get_user
 
 
 # ---------------------------------------------------------------------------
@@ -31,8 +31,6 @@ def sample_comment_doc(sample_comment_id):
     return {
         "commentId": sample_comment_id,
         "userId": TEST_USER_ID,
-        "username": "alice",
-        "userProfilePictureUrl": "",
         "text": "Great post!",
         "likes": 0,
         "timestamp": "2026-04-07T00:00:00+00:00",
@@ -45,12 +43,10 @@ def sample_post_doc(sample_post_id, sample_comment_doc):
         "_id": sample_post_id,
         "postId": sample_post_id,
         "userId": TEST_USER_ID,
-        "username": "alice",
-        "userProfilePictureUrl": "",
         "imgUrl": "https://example.com/img.jpg",
         "caption": "Hello world",
         "timestamp": "2026-04-07T00:00:00+00:00",
-        "likes": 0,
+        "likedBy": [],
         "comments": [sample_comment_doc],
     }
 
@@ -85,7 +81,7 @@ async def test_add_comment_happy_path(sample_post_id, sample_post_doc, sample_co
     _override_auth()
 
     try:
-        with mock_get_username():
+        with mock_get_user():
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:

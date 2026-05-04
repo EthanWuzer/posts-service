@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.main import app
 from app.db.mongo import get_db
-from tests.conftest import TEST_USER_ID, _clear_overrides, _override_auth, mock_get_username
+from tests.conftest import TEST_USER_ID, _clear_overrides, _override_auth, mock_get_user, mock_get_users
 
 
 # ---------------------------------------------------------------------------
@@ -16,8 +16,6 @@ SAMPLE_POST_ID = "550e8400-e29b-41d4-a716-446655440000"
 SAMPLE_POST_DOC = {
     "_id": SAMPLE_POST_ID,
     "userId": TEST_USER_ID,
-    "username": "alice",
-    "userProfilePictureUrl": "",
     "imgUrl": f"http://test/uploads/{SAMPLE_POST_ID}.jpg",
     "caption": "Hello world",
     "timestamp": "2026-04-07T00:00:00+00:00",
@@ -59,10 +57,11 @@ async def test_get_posts_happy_path():
     _override_db(mock_col)
 
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            response = await client.get("/posts")
+        with mock_get_users():
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get("/posts")
     finally:
         _clear_overrides()
 
@@ -72,6 +71,7 @@ async def test_get_posts_happy_path():
     assert len(data) == 1
     assert data[0]["postId"] == SAMPLE_POST_ID
     assert data[0]["likes"] == 5
+    assert data[0]["username"] == "alice"
 
 
 @pytest.mark.asyncio
@@ -84,10 +84,11 @@ async def test_get_posts_not_found():
     _override_db(mock_col)
 
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            response = await client.get("/posts")
+        with mock_get_users():
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get("/posts")
     finally:
         _clear_overrides()
 
@@ -105,10 +106,11 @@ async def test_get_posts_bad_input():
     _override_db(mock_col)
 
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            response = await client.get("/posts?invalid_param=!!!")
+        with mock_get_users():
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get("/posts?invalid_param=!!!")
     finally:
         _clear_overrides()
 
@@ -129,7 +131,7 @@ async def test_create_post_happy_path():
     try:
         with patch("app.routes.posts.validate_image", return_value="jpg"), \
              patch("app.routes.posts.save_image", new=AsyncMock(return_value=f"{SAMPLE_POST_ID}.jpg")), \
-             mock_get_username():
+             mock_get_user():
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -163,7 +165,7 @@ async def test_create_post_not_found():
     try:
         with patch("app.routes.posts.validate_image", return_value="jpg"), \
              patch("app.routes.posts.save_image", new=AsyncMock(return_value=f"{SAMPLE_POST_ID}.jpg")), \
-             mock_get_username():
+             mock_get_user():
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -207,7 +209,7 @@ async def test_create_post_invalid_image_type():
     _override_db(_make_collection_mock())
     _override_auth()
     try:
-        with mock_get_username():
+        with mock_get_user():
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -252,10 +254,11 @@ async def test_get_post_happy_path():
     _override_db(mock_col)
 
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            response = await client.get(f"/posts/{SAMPLE_POST_ID}")
+        with mock_get_users():
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get(f"/posts/{SAMPLE_POST_ID}")
     finally:
         _clear_overrides()
 
@@ -263,6 +266,7 @@ async def test_get_post_happy_path():
     data = response.json()
     assert data["postId"] == SAMPLE_POST_ID
     assert data["likes"] == 5
+    assert data["username"] == "alice"
     mock_col.find_one.assert_called_once_with({"_id": SAMPLE_POST_ID})
 
 
@@ -317,13 +321,14 @@ async def test_update_post_happy_path():
     _override_auth()
 
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            response = await client.put(
-                f"/posts/{SAMPLE_POST_ID}",
-                data={"caption": "Updated caption"},
-            )
+        with mock_get_users():
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.put(
+                    f"/posts/{SAMPLE_POST_ID}",
+                    data={"caption": "Updated caption"},
+                )
     finally:
         _clear_overrides()
 
@@ -392,7 +397,8 @@ async def test_update_post_with_new_image():
     try:
         with patch("app.routes.posts.validate_image", return_value="jpg"), \
              patch("app.routes.posts.save_image", new=AsyncMock(return_value=f"{SAMPLE_POST_ID}.jpg")), \
-             patch("app.routes.posts.delete_image") as mock_delete:
+             patch("app.routes.posts.delete_image") as mock_delete, \
+             mock_get_users():
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -520,10 +526,11 @@ async def test_increment_likes_happy_path():
     _override_auth()
 
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            response = await client.put(f"/posts/{SAMPLE_POST_ID}/likes")
+        with mock_get_users():
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.put(f"/posts/{SAMPLE_POST_ID}/likes")
     finally:
         _clear_overrides()
 
@@ -587,10 +594,11 @@ async def test_decrement_likes_happy_path():
     _override_auth()
 
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            response = await client.delete(f"/posts/{SAMPLE_POST_ID}/likes")
+        with mock_get_users():
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.delete(f"/posts/{SAMPLE_POST_ID}/likes")
     finally:
         _clear_overrides()
 
@@ -629,10 +637,11 @@ async def test_decrement_likes_bad_input():
     _override_auth()
 
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            response = await client.delete(f"/posts/{SAMPLE_POST_ID}/likes")
+        with mock_get_users():
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.delete(f"/posts/{SAMPLE_POST_ID}/likes")
     finally:
         _clear_overrides()
 

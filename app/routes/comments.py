@@ -32,13 +32,9 @@ async def add_comment(
             detail=f"Post with id '{post_id}' not found",
         )
 
-    username = await users_client.get_username(current_user_id)
-
     new_comment = {
         "commentId": str(uuid4()),
         "userId": current_user_id,
-        "username": username,
-        "userProfilePictureUrl": DEFAULT_PROFILE_PICTURE_URL,
         "text": body.text,
         "likes": 0,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -49,6 +45,9 @@ async def add_comment(
         {"$push": {"comments": new_comment}},
     )
 
+    user_info = await users_client.get_user(current_user_id) or {}
+    new_comment["username"] = user_info.get("username") or "[unknown user]"
+    new_comment["userProfilePictureUrl"] = user_info.get("profilePicUrl") or DEFAULT_PROFILE_PICTURE_URL
     return new_comment
 
 
